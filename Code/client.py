@@ -63,11 +63,10 @@ def receive_stream():
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     sock.settimeout(10.0)
-    send_lock = threading.Lock()
     
     try:
         sock.connect((TARGET_IP, PORT))
-        print("Connected! Mouse aur keyboard input viewer window se remote PC ko jayega.")
+        print("Connected! Screen stream active.")
         print("Press 'Q' to quit, 'F' for fullscreen.")
     except Exception as e:
         print(f"Connection failed: {e}")
@@ -80,24 +79,6 @@ def receive_stream():
     
     cv2.namedWindow(WINDOW_TITLE, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WINDOW_TITLE, 1280, 720)
-
-    def on_mouse(event, x, y, flags, param):
-        if event == cv2.EVENT_MOUSEMOVE:
-            send_control_message(sock, send_lock, {'type': 'mouse_move', 'x': x, 'y': y})
-        elif event == cv2.EVENT_LBUTTONDOWN:
-            send_control_message(sock, send_lock, {'type': 'mouse_button', 'button': 'left', 'action': 'down', 'x': x, 'y': y})
-        elif event == cv2.EVENT_LBUTTONUP:
-            send_control_message(sock, send_lock, {'type': 'mouse_button', 'button': 'left', 'action': 'up', 'x': x, 'y': y})
-        elif event == cv2.EVENT_RBUTTONDOWN:
-            send_control_message(sock, send_lock, {'type': 'mouse_button', 'button': 'right', 'action': 'down', 'x': x, 'y': y})
-        elif event == cv2.EVENT_RBUTTONUP:
-            send_control_message(sock, send_lock, {'type': 'mouse_button', 'button': 'right', 'action': 'up', 'x': x, 'y': y})
-        elif event == cv2.EVENT_MBUTTONDOWN:
-            send_control_message(sock, send_lock, {'type': 'mouse_button', 'button': 'middle', 'action': 'down', 'x': x, 'y': y})
-        elif event == cv2.EVENT_MBUTTONUP:
-            send_control_message(sock, send_lock, {'type': 'mouse_button', 'button': 'middle', 'action': 'up', 'x': x, 'y': y})
-
-    cv2.setMouseCallback(WINDOW_TITLE, on_mouse)
 
     try:
         while True:
@@ -129,8 +110,6 @@ def receive_stream():
                     cv2.setWindowProperty(WINDOW_TITLE, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
                 else:
                     cv2.setWindowProperty(WINDOW_TITLE, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
-            elif key != -1:
-                send_control_message(sock, send_lock, {'type': 'key_press', 'key': key})
             
             # Window band ho jaye to exit
             if cv2.getWindowProperty(WINDOW_TITLE, cv2.WND_PROP_VISIBLE) < 1:

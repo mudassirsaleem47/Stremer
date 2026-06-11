@@ -61,13 +61,7 @@ def recv_exact(sock, n):
         data += chunk
     return data
 
-def send_control_message(sock, lock, payload):
-    try:
-        message = (json.dumps(payload, separators=(',', ':')) + '\n').encode('utf-8')
-        with lock:
-            sock.sendall(message)
-    except Exception:
-        pass
+
 
 def check_ping(ip):
     """Socket se ping - subprocess spawn nahi hota"""
@@ -183,7 +177,7 @@ class AppLogic:
             callback_done()
             return
 
-        send_lock = threading.Lock()
+
 
         def recv_exact(s, n):
             data = b''
@@ -197,23 +191,7 @@ class AppLogic:
             cv2.namedWindow('ScreenMirror Pro', cv2.WINDOW_NORMAL)
             fullscreen = False
 
-            def on_mouse(event, x, y, flags, param):
-                if event == cv2.EVENT_MOUSEMOVE:
-                    send_control_message(sock, send_lock, {'type': 'mouse_move', 'x': x, 'y': y})
-                elif event == cv2.EVENT_LBUTTONDOWN:
-                    send_control_message(sock, send_lock, {'type': 'mouse_button', 'button': 'left', 'action': 'down', 'x': x, 'y': y})
-                elif event == cv2.EVENT_LBUTTONUP:
-                    send_control_message(sock, send_lock, {'type': 'mouse_button', 'button': 'left', 'action': 'up', 'x': x, 'y': y})
-                elif event == cv2.EVENT_RBUTTONDOWN:
-                    send_control_message(sock, send_lock, {'type': 'mouse_button', 'button': 'right', 'action': 'down', 'x': x, 'y': y})
-                elif event == cv2.EVENT_RBUTTONUP:
-                    send_control_message(sock, send_lock, {'type': 'mouse_button', 'button': 'right', 'action': 'up', 'x': x, 'y': y})
-                elif event == cv2.EVENT_MBUTTONDOWN:
-                    send_control_message(sock, send_lock, {'type': 'mouse_button', 'button': 'middle', 'action': 'down', 'x': x, 'y': y})
-                elif event == cv2.EVENT_MBUTTONUP:
-                    send_control_message(sock, send_lock, {'type': 'mouse_button', 'button': 'middle', 'action': 'up', 'x': x, 'y': y})
 
-            cv2.setMouseCallback('ScreenMirror Pro', on_mouse)
 
             while True:
                 raw_size = recv_exact(sock, 4)
@@ -232,8 +210,6 @@ class AppLogic:
                 if key in (ord('f'), ord('F')):
                     fullscreen = not fullscreen
                     cv2.setWindowProperty('ScreenMirror Pro', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN if fullscreen else cv2.WINDOW_NORMAL)
-                elif key != -1:
-                    send_control_message(sock, send_lock, {'type': 'key_press', 'key': key})
                 
                 if cv2.getWindowProperty('ScreenMirror Pro', cv2.WND_PROP_VISIBLE) < 1: break
         except Exception as e:

@@ -1,0 +1,95 @@
+import os
+import sys
+import numpy as np
+import cv2
+import websocket
+
+CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), 'config_global.txt')
+WINDOW_TITLE = 'Global Stream Monitor'
+
+def load_relay_url():
+    """config_global.txt se relay URL padho ya user se lo."""
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, 'r') as f:
+            url = f.read().strip()
+            if url:
+                print(f"Relay URL loaded: {url}")
+                return url
+                
+    url = input("Enter Relay WS URL (e.g. ws://localhost:8080 or wss://app.up.railway.app): ").strip()
+    if not url:
+        url = "ws://localhost:8080"
+        
+    with open(CONFIG_FILE, 'w') as f:
+        f.write(url)
+    return url
+
+def start_viewer():
+    relay_url = load_relay_url()
+    
+    # Check consumer path
+    if not relay_url.endswith("/consumer"):
+        relay_url = relay_url.rstrip("/")
+        consumer_url = f"{relay_url}/consumer"
+    else:
+        consumer_url = relay_url
+        
+    print(f"Connecting to relay at {consumer_url} ...")
+    
+    try:
+        ws = websocket.create_connection(consumer_url)
+        print("Connected! Display window active.")
+        print("Press 'Q' to quit, 'F' for fullscreen.")
+    except Exception as e:
+        print(f"Connection failed: {e}")
+        sys.exit(1)
+
+    fullscreen = False
+    cv2.namedWindow(WINDOW_TITLE, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(WINDOW_TITLE, 1280, 720)
+    
+    try:
+        while True:
+            # Receive image frame
+            try:
+                data = ws.recv()
+            except Exception as e:
+                print(f"Connection closed: {e}")
+                break
+                
+            if not data:
+                break
+                
+            # Decode JPEG
+            buf = np.frombuffer(data, dtype=np.uint8)
+            frame = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+            
+            if frame is not None:
+                cv2.imshow(WINDOW_TITLE, frame)
+                
+            # Local window keys
+            key = cv2.waitKeyEx(1)
+            if key in (ord('q'), ord('Q')):
+                break
+            elif key in (ord('f'), ord('F')):
+                fullscreen = not fullscreen
+                if fullscreen:
+                    cv2.setWindowProperty(WINDOW_TITLE, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                else:
+                    cv2.setWindowProperty(WINDOW_TITLE, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+                    
+            # Check if viewer closed
+            if cv2.getWindowProperty(WINDOW_TITLE, cv2.WND_PROP_VISIBLE) < 1:
+                break
+                
+    except KeyboardInterrupt:
+        print("\nViewer stopped.")
+    finally:
+        try:
+            ws.close()
+        except:
+            pass
+        cv2.destroyAllWindows()
+
+if __name__ == '__main__':
+    start_viewer()

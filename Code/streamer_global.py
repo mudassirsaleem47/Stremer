@@ -1,0 +1,91 @@
+import os
+import sys
+import time
+import mss
+import numpy as np
+import cv2
+import websocket
+
+CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), 'config_global.txt')
+
+# Streaming settings
+FPS = 15
+QUALITY = 80
+MONITOR = 1
+
+def load_relay_url():
+    """config_global.txt se relay URL padho ya user se lo."""
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, 'r') as f:
+            url = f.read().strip()
+            if url:
+                print(f"Relay URL loaded: {url}")
+                return url
+                
+    url = input("Enter Relay WS URL (e.g. ws://localhost:8080 or wss://app.up.railway.app): ").strip()
+    if not url:
+        url = "ws://localhost:8080"
+        
+    with open(CONFIG_FILE, 'w') as f:
+        f.write(url)
+    return url
+
+def start_stream():
+    relay_url = load_relay_url()
+    
+    # Check producer path
+    if not relay_url.endswith("/producer"):
+        relay_url = relay_url.rstrip("/")
+        producer_url = f"{relay_url}/producer"
+    else:
+        producer_url = relay_url
+        
+    print(f"Connecting to relay at {producer_url} ...")
+    
+    try:
+        ws = websocket.create_connection(producer_url)
+        print("Connected! Streaming active. Press Ctrl+C to stop.")
+    except Exception as e:
+        print(f"Connection failed: {e}")
+        sys.exit(1)
+
+    frame_time = 1.0 / FPS
+    
+    try:
+        with mss.mss() as sct:
+            monitor = sct.monitors[MONITOR]
+            
+            while True:
+                t_start = time.time()
+                
+                # Grab screen frame
+                img = np.array(sct.grab(monitor))
+                img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+                
+                # Encode JPEG
+                _, buf = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, QUALITY])
+                data = buf.tobytes()
+                
+                # Send packet
+                try:
+                    ws.send_binary(data)
+                except Exception as e:
+                    print(f"Socket disconnected: {e}")
+                    break
+                
+                # Control rate
+                elapsed = time.time() - t_start
+                sleep_time = frame_time - elapsed
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
+                    
+    except KeyboardInterrupt:
+        print("\nStreaming stopped.")
+    finally:
+        try:
+            ws.close()
+        except:
+            pass
+
+if __name__ == '__main__':
+    start_stream()

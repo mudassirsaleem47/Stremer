@@ -1,0 +1,5 @@
+websockets
+websocket-client
+mss
+numpy
+opencv-python

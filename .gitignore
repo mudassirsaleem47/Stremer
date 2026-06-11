@@ -1,0 +1,5 @@
+Code/server.log
+Code/config_global.txt
+config.txt
+__pycache__/
+*.pyc
