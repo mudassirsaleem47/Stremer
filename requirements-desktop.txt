@@ -2,4 +2,8 @@ websocket-client
 mss
 numpy
 opencv-python
+pyaudiowebsocket-client
+mss
+numpy
+opencv-python
 pyaudio

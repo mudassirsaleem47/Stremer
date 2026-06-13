@@ -3,6 +3,7 @@ import threading
 import subprocess
 import queue
 import os
+import stat
 import json
 import time
 import socket
@@ -18,6 +19,8 @@ import traceback
 CONFIG_FILE = "config.txt"
 NAMES_FILE = "device_names.json"
 DEFAULT_PORT = 9999
+GLOBAL_CONFIG_FILE = "config_global.txt"
+UI_CONFIG_FILE = "config_ui.json"
 
 def write_crash_log(exc_text):
     try:
@@ -37,6 +40,57 @@ def install_exception_hook():
         except Exception:
             pass
     sys.excepthook = _hook
+
+
+def app_base_dir():
+    return os.path.dirname(os.path.abspath(sys.executable if getattr(sys, 'frozen', False) else __file__))
+
+
+def read_text_file(path):
+    try:
+        if os.path.exists(path):
+            with open(path, 'r', encoding='utf-8') as f:
+                return f.read().strip()
+    except Exception:
+        pass
+    return ''
+
+
+def write_text_file(path, text):
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(text)
+
+
+def normalize_relay_url(url):
+    url = (url or '').strip()
+    if not url:
+        return ''
+    url = url.replace('https://', 'wss://', 1)
+    url = url.replace('http://', 'ws://', 1)
+    if url.startswith('wss://') or url.startswith('ws://'):
+        return url.rstrip('/')
+    return f'wss://{url}'.rstrip('/')
+
+
+def normalize_http_url(url):
+    url = (url or '').strip()
+    if not url:
+        return ''
+    if url.startswith('wss://'):
+        return 'https://' + url[len('wss://'):].rstrip('/')
+    if url.startswith('ws://'):
+        return 'http://' + url[len('ws://'):].rstrip('/')
+    if url.startswith('https://') or url.startswith('http://'):
+        return url.rstrip('/')
+    return f'https://{url}'.rstrip('/')
+
+
+def load_pyaudio():
+    try:
+        import importlib
+        return importlib.import_module('pyaudio')
+    except Exception:
+        return None
 
 # =============================================================================
 # CORE LOGIC WRAPPERS (Running in Threads)
@@ -164,6 +218,52 @@ class AppLogic:
         callback_done()
 
     @staticmethod
+    def fetch_global_devices(relay_url, callback_log):
+        ok, devices, _ = AppLogic.test_relay_connection(relay_url, callback_log)
+        return devices if ok else []
+
+    @staticmethod
+    def test_relay_connection(relay_url, callback_log):
+        relay_url = normalize_relay_url(relay_url)
+        if not relay_url:
+            return False, [], "Relay URL is empty"
+
+        registry_url = relay_url.rstrip('/') + '/registry'
+
+        try:
+            import websocket
+        except ImportError:
+            return False, [], "websocket-client package is missing"
+
+        try:
+            ws = websocket.create_connection(registry_url, timeout=6)
+            try:
+                payload = ws.recv()
+            finally:
+                ws.close()
+
+            if isinstance(payload, bytes):
+                payload = payload.decode('utf-8', errors='ignore')
+
+            if not isinstance(payload, str) or not payload.strip():
+                return False, [], "Relay response is empty"
+
+            try:
+                data = json.loads(payload)
+            except Exception:
+                preview = payload[:80].replace('\n', ' ').strip()
+                return False, [], f"Relay reachable but unexpected response: {preview}"
+
+            devices = data.get('devices', []) if isinstance(data, dict) else []
+            if not isinstance(devices, list):
+                devices = []
+
+            return True, devices, f"Connected. Active devices: {len(devices)}"
+        except Exception as e:
+            callback_log(f"Global connection test failed: {e}")
+            return False, [], str(e)
+
+    @staticmethod
     def run_viewer(ip, callback_log, callback_done):
         callback_log(f"Connecting to {ip}:{DEFAULT_PORT}...")
         try:
@@ -232,10 +332,8 @@ class AppLogic:
             callback_done()
             return
             
-        try:
-            import pyaudio
-        except ImportError:
-            pyaudio = None
+        pyaudio = load_pyaudio()
+        if not pyaudio:
             callback_log("Warning: 'pyaudio' is missing. Voice output will be disabled.")
         
         try:
@@ -351,10 +449,8 @@ class AppLogic:
             callback_done()
             return
             
-        try:
-            import pyaudio
-        except ImportError:
-            pyaudio = None
+        pyaudio = load_pyaudio()
+        if not pyaudio:
             callback_log("Warning: 'pyaudio' is missing. Voice streaming will be disabled.")
             
         try:
@@ -484,6 +580,7 @@ class ModernApp:
         
         self.client_running = False
         self.scanner_running = False
+        self.global_refresh_running = False
         self.viewer_proc = None
         self._queue = queue.Queue()
         self.custom_names = self.load_custom_names()
@@ -495,6 +592,7 @@ class ModernApp:
         self.ip_entry_var = StringVar()
         self.streamer_running = False
         self.streamer_stop_event = None
+        self.global_devices = {}
         
         self.setup_ui()
         self.load_config()
@@ -526,6 +624,7 @@ class ModernApp:
         self.create_settings_page()
         self.create_logs_page()
         self.show_page("Dashboard")
+        self.root.after(1000, self.refresh_global_devices_periodically)
 
     def _setup_row_context_menu(self, widget):
         menu = Menu(self.root, tearoff=0)
@@ -613,6 +712,59 @@ class ModernApp:
                     values[1] = self.get_display_name(ip, str(values[1]))
                 tree.item(item, values=values)
 
+    def refresh_global_devices(self):
+        if self.global_refresh_running:
+            return
+
+        self.global_refresh_running = True
+
+        def worker():
+            try:
+                devices = AppLogic.fetch_global_devices(self.relay_url_var.get(), self.log)
+                self.global_devices = {str(item.get('device_id', '')): item for item in devices if isinstance(item, dict)}
+                self.root.after(0, self.render_global_devices)
+            finally:
+                self.global_refresh_running = False
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def refresh_global_devices_periodically(self):
+        try:
+            if self.connection_mode.get() == 'global':
+                self.refresh_global_devices()
+        finally:
+            self.root.after(5000, self.refresh_global_devices_periodically)
+
+    def render_global_devices(self):
+        if not hasattr(self, 'global_tree'):
+            return
+        for item in self.global_tree.get_children():
+            self.global_tree.delete(item)
+
+        for device in self.global_devices.values():
+            device_id = str(device.get('device_id', 'Unknown'))
+            role = str(device.get('role', 'Unknown'))
+            hostname = str(device.get('hostname', 'Unknown'))
+            status = str(device.get('status', 'ACTIVE'))
+            last_seen = str(device.get('last_seen', ''))
+            self.global_tree.insert('', 'end', values=(device_id, role, hostname, status, last_seen))
+
+    def load_or_create_installer(self):
+        base = app_base_dir()
+        installer_dir = os.path.join(base, 'installer')
+        os.makedirs(installer_dir, exist_ok=True)
+        source_bat = os.path.join(base, '..', 'StartwindowsService.bat')
+        target_bat = os.path.join(installer_dir, 'StartwindowsService.bat')
+        if os.path.exists(source_bat) and not os.path.exists(target_bat):
+            try:
+                with open(source_bat, 'r', encoding='utf-8', errors='ignore') as fsrc:
+                    content = fsrc.read()
+                with open(target_bat, 'w', encoding='utf-8') as fdst:
+                    fdst.write(content)
+            except Exception as e:
+                self.log(f'Installer copy skipped: {e}')
+        return target_bat
+
     def create_dashboard_page(self):
         page = ttk.Frame(self.content_frame); self.pages["Dashboard"] = page
         ttk.Label(page, text="System Dashboard", style="Title.TLabel").pack(anchor=W, pady=(0, 20))
@@ -627,10 +779,10 @@ class ModernApp:
         self.scan_dash_btn = ttk.Button(self.c_card, text="Scan Network", command=lambda: (self.show_page("Scanner"), self.start_scan()))
         self.scan_dash_btn.pack(side='right', padx=10)
         
-        self.quick_connect_label = ttk.Label(page, text="Quick Connect - Online Devices", font=("Segoe UI", 10, "bold"))
-        self.quick_connect_label.pack(anchor=W, pady=(20, 5))
+        self.local_list_label = ttk.Label(page, text="Local LAN Devices", font=("Segoe UI", 10, "bold"))
+        self.local_list_label.pack(anchor=W, pady=(20, 5))
         cols = ('IP Address', 'Hostname', 'Status')
-        self.dash_tree = ttk.Treeview(page, columns=cols, show='headings', height=8)
+        self.dash_tree = ttk.Treeview(page, columns=cols, show='headings', height=6)
         for col in cols:
             self.dash_tree.heading(col, text=col)
             self.dash_tree.column(col, width=150)
@@ -640,6 +792,16 @@ class ModernApp:
         
         self.dash_connect_btn = ttk.Button(page, text="Connect to Selected", state='disabled', command=self.apply_dash_ip)
         self.dash_connect_btn.pack(anchor=E)
+
+        self.global_list_label = ttk.Label(page, text="Global Active Devices (Railway)", font=("Segoe UI", 10, "bold"))
+        self.global_list_label.pack(anchor=W, pady=(20, 5))
+        global_cols = ('Device ID', 'Role', 'Hostname', 'Status', 'Last Seen')
+        self.global_tree = ttk.Treeview(page, columns=global_cols, show='headings', height=6)
+        for col in global_cols:
+            self.global_tree.heading(col, text=col)
+            self.global_tree.column(col, width=140)
+        self.global_tree.pack(fill='both', expand=True, pady=(0, 10))
+        self._setup_row_context_menu(self.global_tree)
 
         self.info_card = ttk.LabelFrame(page, text=" Connection Info ", padding=15)
         self.info_card.pack(fill='x', pady=10)
@@ -701,6 +863,10 @@ class ModernApp:
         role_frame.grid(row=1, column=1, sticky=W, padx=10, pady=5)
         ttk.Radiobutton(role_frame, text="Watch Screen (Viewer)", variable=self.global_role, value="viewer").pack(side='left', padx=5)
         ttk.Radiobutton(role_frame, text="Share Screen & Voice (Streamer)", variable=self.global_role, value="streamer").pack(side='left', padx=5)
+
+        self.relay_test_var = StringVar(value="Relay Status: Not tested")
+        ttk.Button(self.global_settings_frame, text="Test Relay Connection", command=self.test_relay_connection).grid(row=2, column=0, sticky=W, pady=8)
+        ttk.Label(self.global_settings_frame, textvariable=self.relay_test_var).grid(row=2, column=1, sticky=W, padx=10)
         
         # Save Button
         ttk.Button(page, text="Save Settings", command=self.save_config).pack(anchor=W, pady=20)
@@ -743,20 +909,21 @@ class ModernApp:
 
     def load_config(self):
         # Read local IP
-        if os.path.exists(CONFIG_FILE):
-            with open(CONFIG_FILE, 'r') as f:
+        local_config_path = os.path.join(app_base_dir(), CONFIG_FILE)
+        if os.path.exists(local_config_path):
+            with open(local_config_path, 'r') as f:
                 ip = f.read().strip()
                 self.ip_entry_var.set(ip)
         
         # Read relay URL from config_global.txt
-        global_config_path = "config_global.txt"
+        global_config_path = os.path.join(app_base_dir(), GLOBAL_CONFIG_FILE)
         if os.path.exists(global_config_path):
             with open(global_config_path, 'r') as f:
                 url = f.read().strip()
-                self.relay_url_var.set(url)
+                self.relay_url_var.set(normalize_relay_url(url))
                 
         # Read JSON UI config if it exists
-        ui_config_path = "config_ui.json"
+        ui_config_path = os.path.join(app_base_dir(), UI_CONFIG_FILE)
         if os.path.exists(ui_config_path):
             try:
                 with open(ui_config_path, 'r', encoding='utf-8') as f:
@@ -772,16 +939,17 @@ class ModernApp:
     def save_config(self):
         # Save IP
         ip = self.ip_entry_var.get().strip()
-        with open(CONFIG_FILE, 'w') as f: 
+        with open(os.path.join(app_base_dir(), CONFIG_FILE), 'w') as f: 
             f.write(ip)
             
         # Save Relay URL to config_global.txt
-        url = self.relay_url_var.get().strip()
-        with open("config_global.txt", 'w') as f: 
+        url = normalize_relay_url(self.relay_url_var.get().strip())
+        self.relay_url_var.set(url)
+        with open(os.path.join(app_base_dir(), GLOBAL_CONFIG_FILE), 'w') as f: 
             f.write(url)
             
         # Save JSON UI config
-        ui_config_path = "config_ui.json"
+        ui_config_path = os.path.join(app_base_dir(), UI_CONFIG_FILE)
         cfg = {
             "connection_mode": self.connection_mode.get(),
             "global_role": self.global_role.get()
@@ -794,6 +962,32 @@ class ModernApp:
             
         self.update_dashboard_ui()
         self.log("Settings saved.")
+
+    def test_relay_connection(self):
+        relay_url = normalize_relay_url(self.relay_url_var.get().strip())
+        self.relay_url_var.set(relay_url)
+
+        if not relay_url:
+            self.relay_test_var.set("Relay Status: Not connected")
+            messagebox.showwarning("Relay Test", "Please enter a Relay WS URL first.")
+            return
+
+        self.relay_test_var.set("Relay Status: Testing...")
+
+        def worker():
+            ok, devices, message = AppLogic.test_relay_connection(relay_url, self.log)
+
+            def done():
+                if ok:
+                    self.relay_test_var.set(f"Relay Status: Connected ({len(devices)} active)")
+                    messagebox.showinfo("Relay Test", message)
+                else:
+                    self.relay_test_var.set("Relay Status: Not connected")
+                    messagebox.showwarning("Relay Test", f"Connection failed: {message}")
+
+            self.root.after(0, done)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def start_scan(self):
         if self.scanner_running: return
@@ -889,15 +1083,17 @@ class ModernApp:
                 self.c_status_var.set("Status: Ready")
                 self.c_btn.config(text="Open Viewer", state='normal')
             self.scan_dash_btn.pack(side='right', padx=10)
-            self.quick_connect_label.pack(anchor=W, pady=(20, 5))
+            self.local_list_label.pack(anchor=W, pady=(20, 5))
             self.dash_tree.pack(fill='both', expand=True, pady=(0, 10))
             self.dash_connect_btn.pack(anchor=E)
             self.target_ip_var.set(f"Target IP: {self.ip_entry_var.get()}")
             self.info_card.config(text=" Connection Info (Local LAN) ")
+            self.global_list_label.pack_forget()
+            self.global_tree.pack_forget()
         else:
             role = self.global_role.get()
             self.scan_dash_btn.pack_forget()
-            self.quick_connect_label.pack_forget()
+            self.local_list_label.pack_forget()
             self.dash_tree.pack_forget()
             self.dash_connect_btn.pack_forget()
             
@@ -920,6 +1116,8 @@ class ModernApp:
                     
             self.target_ip_var.set(f"Relay URL: {self.relay_url_var.get()}")
             self.info_card.config(text=" Connection Info (Global Internet) ")
+            self.global_list_label.pack(anchor=W, pady=(20, 5))
+            self.global_tree.pack(fill='both', expand=True, pady=(0, 10))
 
     def _reader_thread(self, proc, mode):
         pass  # Not used anymore
@@ -949,6 +1147,13 @@ class ModernApp:
                 self.start_global_viewer(url)
             else:
                 self.toggle_global_streamer(url)
+
+    def start_installer(self):
+        installer_bat = self.load_or_create_installer()
+        messagebox.showinfo(
+            "Installer Ready",
+            f"Installer BAT ready at:\n{installer_bat}\n\nUse the packaged EXE alongside it for machine install."
+        )
 
     def clear_scanner_results(self):
         self.tree.delete(*self.tree.get_children())

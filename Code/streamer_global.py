@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import json
 import mss
 import numpy as np
 import cv2
@@ -47,6 +48,15 @@ def start_stream():
     
     try:
         ws = websocket.create_connection(producer_url)
+        try:
+            ws.send(json.dumps({
+                'role': 'producer',
+                'hostname': os.environ.get('COMPUTERNAME', 'Unknown'),
+                'device_id': os.environ.get('COMPUTERNAME', 'Unknown'),
+                'connected_at': time.strftime('%Y-%m-%d %H:%M:%S')
+            }))
+        except Exception:
+            pass
         print("Connected! Streaming active (Video + Voice). Press Ctrl+C to stop.")
     except Exception as e:
         print(f"Connection failed: {e}")

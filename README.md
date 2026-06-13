@@ -66,6 +66,22 @@ Basic controls in the viewer window:
 
 This workspace also includes `server.exe` and `streamer.exe`. If you are using the packaged version instead of Python source files, `StartwindowsService.bat` is the launcher for the server side.
 
+## Build And Install
+
+To build the GUI EXE, run:
+
+```bash
+build_ui_exe.bat
+```
+
+To install the built GUI EXE on another Windows PC, run:
+
+```bash
+InstallScreenMirrorProUI.bat
+```
+
+The installer copies `ScreenMirrorProUI.exe` into `C:\Program Files\ScreenMirrorPro\`.
+
 ## Railway Deployment
 
 The relay service is intended to run on Railway from the repository root using the `Procfile` start command:

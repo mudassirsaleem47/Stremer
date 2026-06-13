@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import numpy as np
 import cv2
 import websocket
@@ -42,6 +43,15 @@ def start_viewer():
     
     try:
         ws = websocket.create_connection(consumer_url)
+        try:
+            ws.send(json.dumps({
+                'role': 'consumer',
+                'hostname': os.environ.get('COMPUTERNAME', 'Unknown'),
+                'device_id': os.environ.get('COMPUTERNAME', 'Unknown'),
+                'connected_at': time.strftime('%Y-%m-%d %H:%M:%S')
+            }))
+        except Exception:
+            pass
         print("Connected! Display window active (Video + Voice).")
         print("Press 'Q' to quit, 'F' for fullscreen.")
     except Exception as e:
