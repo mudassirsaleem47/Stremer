@@ -22,14 +22,20 @@ Stremer is a simple LAN screen-mirroring tool with mouse and keyboard control. O
 
 ## Setup From Source
 
-1. Install the dependencies:
+1. Install the relay dependency set if you are deploying to Railway:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-2. Make sure both PCs are on the same LAN.
-3. Pick the target PC’s local IPv4 address and put it in `config.txt`.
+2. Install the desktop app dependencies if you are running the UI or global viewer locally:
+
+```bash
+pip install -r requirements-desktop.txt
+```
+
+3. Make sure both PCs are on the same LAN.
+4. Pick the target PC’s local IPv4 address and put it in `config.txt`.
 
 ## How To Run
 
