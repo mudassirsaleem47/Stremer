@@ -5,6 +5,9 @@ import mss
 import numpy as np
 import cv2
 import websocket
+import pyaudio
+import threading
+
 
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), 'config_global.txt')
 
@@ -44,10 +47,50 @@ def start_stream():
     
     try:
         ws = websocket.create_connection(producer_url)
-        print("Connected! Streaming active. Press Ctrl+C to stop.")
+        print("Connected! Streaming active (Video + Voice). Press Ctrl+C to stop.")
     except Exception as e:
         print(f"Connection failed: {e}")
         sys.exit(1)
+
+    ws_lock = threading.Lock()
+    
+    def send_safe(prefix, payload):
+        try:
+            with ws_lock:
+                ws.send_binary(prefix + payload)
+        except Exception as e:
+            raise e
+
+    def audio_thread_fn():
+        p = pyaudio.PyAudio()
+        try:
+            audio_stream = p.open(format=pyaudio.paInt16,
+                                  channels=1,
+                                  rate=16000,
+                                  input=True,
+                                  frames_per_buffer=1024)
+        except Exception as e:
+            print(f"Microphone capture not available: {e}")
+            p.terminate()
+            return
+            
+        print("Microphone voice capture started.")
+        try:
+            while True:
+                audio_data = audio_stream.read(1024, exception_on_overflow=False)
+                send_safe(b'a', audio_data)
+        except Exception:
+            pass
+        finally:
+            try:
+                audio_stream.stop_stream()
+                audio_stream.close()
+            except:
+                pass
+            p.terminate()
+
+    audio_thread = threading.Thread(target=audio_thread_fn, daemon=True)
+    audio_thread.start()
 
     frame_time = 1.0 / FPS
     
@@ -68,7 +111,7 @@ def start_stream():
                 
                 # Send packet
                 try:
-                    ws.send_binary(data)
+                    send_safe(b'v', data)
                 except Exception as e:
                     print(f"Socket disconnected: {e}")
                     break

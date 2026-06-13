@@ -18,13 +18,14 @@ Stremer is a simple LAN screen-mirroring tool with mouse and keyboard control. O
   - `mss`
   - `numpy`
   - `opencv-python`
+  - `websockets`
 
 ## Setup From Source
 
 1. Install the dependencies:
 
 ```bash
-pip install mss numpy opencv-python
+pip install -r requirements.txt
 ```
 
 2. Make sure both PCs are on the same LAN.

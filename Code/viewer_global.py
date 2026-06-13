@@ -3,6 +3,10 @@ import sys
 import numpy as np
 import cv2
 import websocket
+import pyaudio
+import queue
+import threading
+
 
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), 'config_global.txt')
 WINDOW_TITLE = 'Global Stream Monitor'
@@ -38,11 +42,46 @@ def start_viewer():
     
     try:
         ws = websocket.create_connection(consumer_url)
-        print("Connected! Display window active.")
+        print("Connected! Display window active (Video + Voice).")
         print("Press 'Q' to quit, 'F' for fullscreen.")
     except Exception as e:
         print(f"Connection failed: {e}")
         sys.exit(1)
+
+    audio_queue = queue.Queue()
+    
+    def audio_play_thread_fn():
+        p = pyaudio.PyAudio()
+        try:
+            audio_stream = p.open(format=pyaudio.paInt16,
+                                  channels=1,
+                                  rate=16000,
+                                  output=True,
+                                  frames_per_buffer=1024)
+        except Exception as e:
+            print(f"Speakers playback failed: {e}")
+            p.terminate()
+            return
+            
+        try:
+            while True:
+                chunk = audio_queue.get()
+                if chunk is None:
+                    break
+                try:
+                    audio_stream.write(chunk)
+                except Exception:
+                    break
+        finally:
+            try:
+                audio_stream.stop_stream()
+                audio_stream.close()
+            except:
+                pass
+            p.terminate()
+
+    audio_play_thread = threading.Thread(target=audio_play_thread_fn, daemon=True)
+    audio_play_thread.start()
 
     fullscreen = False
     cv2.namedWindow(WINDOW_TITLE, cv2.WINDOW_NORMAL)
@@ -57,15 +96,21 @@ def start_viewer():
                 print(f"Connection closed: {e}")
                 break
                 
-            if not data:
-                break
+            if not data or not isinstance(data, bytes):
+                continue
                 
-            # Decode JPEG
-            buf = np.frombuffer(data, dtype=np.uint8)
-            frame = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+            prefix = data[0:1]
+            payload = data[1:]
             
-            if frame is not None:
-                cv2.imshow(WINDOW_TITLE, frame)
+            if prefix == b'a':
+                audio_queue.put(payload)
+            elif prefix == b'v':
+                # Decode JPEG
+                buf = np.frombuffer(payload, dtype=np.uint8)
+                frame = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+                
+                if frame is not None:
+                    cv2.imshow(WINDOW_TITLE, frame)
                 
             # Local window keys
             key = cv2.waitKeyEx(1)
@@ -85,6 +130,7 @@ def start_viewer():
     except KeyboardInterrupt:
         print("\nViewer stopped.")
     finally:
+        audio_queue.put(None)
         try:
             ws.close()
         except:

@@ -219,6 +219,252 @@ class AppLogic:
             cv2.destroyAllWindows()
             callback_done()
 
+    @staticmethod
+    def run_global_viewer(relay_url, callback_log, callback_done):
+        if not relay_url.endswith("/consumer"):
+            relay_url = relay_url.rstrip("/") + "/consumer"
+        callback_log(f"Connecting to global relay: {relay_url}...")
+        
+        try:
+            import websocket
+        except ImportError:
+            callback_log("Error: 'websocket-client' package is missing. Run 'pip install websocket-client'.")
+            callback_done()
+            return
+            
+        try:
+            import pyaudio
+        except ImportError:
+            pyaudio = None
+            callback_log("Warning: 'pyaudio' is missing. Voice output will be disabled.")
+        
+        try:
+            ws = websocket.create_connection(relay_url)
+            callback_log("Connected to Global Stream!")
+        except Exception as e:
+            callback_log(f"Global connection failed: {e}")
+            callback_done()
+            return
+            
+        audio_queue = queue.Queue()
+        audio_stream = None
+        p = None
+        
+        if pyaudio:
+            def audio_play_thread_fn():
+                nonlocal p, audio_stream
+                p = pyaudio.PyAudio()
+                try:
+                    audio_stream = p.open(format=pyaudio.paInt16,
+                                          channels=1,
+                                          rate=16000,
+                                          output=True,
+                                          frames_per_buffer=1024)
+                except Exception as e:
+                    callback_log(f"Speakers playback failed: {e}")
+                    p.terminate()
+                    p = None
+                    return
+                    
+                try:
+                    while True:
+                        chunk = audio_queue.get()
+                        if chunk is None:
+                            break
+                        try:
+                            audio_stream.write(chunk)
+                        except Exception:
+                            break
+                finally:
+                    try:
+                        audio_stream.stop_stream()
+                        audio_stream.close()
+                    except:
+                        pass
+                    if p:
+                        p.terminate()
+
+            audio_play_thread = threading.Thread(target=audio_play_thread_fn, daemon=True)
+            audio_play_thread.start()
+        
+        fullscreen = False
+        cv2.namedWindow('ScreenMirror Pro (Global)', cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('ScreenMirror Pro (Global)', 1280, 720)
+        
+        try:
+            while True:
+                try:
+                    data = ws.recv()
+                except Exception as e:
+                    callback_log(f"Global Connection closed: {e}")
+                    break
+                    
+                if not data or not isinstance(data, bytes):
+                    continue
+                    
+                prefix = data[0:1]
+                payload = data[1:]
+                
+                if prefix == b'a':
+                    if pyaudio:
+                        audio_queue.put(payload)
+                elif prefix == b'v':
+                    buf = np.frombuffer(payload, dtype=np.uint8)
+                    frame = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+                    
+                    if frame is not None:
+                        cv2.imshow('ScreenMirror Pro (Global)', frame)
+                    
+                key = cv2.waitKeyEx(1)
+                if key in (ord('q'), ord('Q')):
+                    break
+                elif key in (ord('f'), ord('F')):
+                    fullscreen = not fullscreen
+                    if fullscreen:
+                        cv2.setWindowProperty('ScreenMirror Pro (Global)', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+                    else:
+                        cv2.setWindowProperty('ScreenMirror Pro (Global)', cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+                        
+                if cv2.getWindowProperty('ScreenMirror Pro (Global)', cv2.WND_PROP_VISIBLE) < 1:
+                    break
+        except Exception as e:
+            callback_log(f"Global Viewer Error: {e}")
+        finally:
+            audio_queue.put(None)
+            try:
+                ws.close()
+            except:
+                pass
+            cv2.destroyAllWindows()
+            callback_done()
+
+    @staticmethod
+    def run_global_streamer(relay_url, callback_log, callback_done, stop_event):
+        if not relay_url.endswith("/producer"):
+            relay_url = relay_url.rstrip("/") + "/producer"
+        callback_log(f"Connecting to global relay for streaming: {relay_url}...")
+        
+        try:
+            import websocket
+        except ImportError:
+            callback_log("Error: 'websocket-client' package is missing. Run 'pip install websocket-client'.")
+            callback_done()
+            return
+            
+        try:
+            import pyaudio
+        except ImportError:
+            pyaudio = None
+            callback_log("Warning: 'pyaudio' is missing. Voice streaming will be disabled.")
+            
+        try:
+            import mss
+        except ImportError:
+            callback_log("Error: 'mss' package is missing.")
+            callback_done()
+            return
+        
+        try:
+            ws = websocket.create_connection(relay_url)
+            callback_log("Connected! Global Screen Sharing Active (Video + Voice).")
+        except Exception as e:
+            callback_log(f"Global streaming connection failed: {e}")
+            callback_done()
+            return
+
+        ws_lock = threading.Lock()
+        
+        def send_safe(prefix, payload):
+            try:
+                with ws_lock:
+                    ws.send_binary(prefix + payload)
+            except Exception as e:
+                raise e
+
+        audio_stream = None
+        p = None
+        if pyaudio:
+            p = pyaudio.PyAudio()
+            try:
+                audio_stream = p.open(format=pyaudio.paInt16,
+                                      channels=1,
+                                      rate=16000,
+                                      input=True,
+                                      frames_per_buffer=1024)
+                callback_log("Microphone voice capture started.")
+            except Exception as e:
+                callback_log(f"Microphone capture not available: {e}")
+                p.terminate()
+                p = None
+                
+        def audio_thread_fn():
+            if not audio_stream:
+                return
+            try:
+                while not stop_event.is_set():
+                    audio_data = audio_stream.read(1024, exception_on_overflow=False)
+                    send_safe(b'a', audio_data)
+            except Exception:
+                pass
+            finally:
+                try:
+                    audio_stream.stop_stream()
+                    audio_stream.close()
+                except:
+                    pass
+                if p:
+                    p.terminate()
+
+        if audio_stream:
+            audio_thread = threading.Thread(target=audio_thread_fn, daemon=True)
+            audio_thread.start()
+
+        FPS_VAL = 15
+        QUALITY_VAL = 80
+        MONITOR_VAL = 1
+        frame_time = 1.0 / FPS_VAL
+
+        try:
+            with mss.mss() as sct:
+                monitor = sct.monitors[MONITOR_VAL]
+                
+                while not stop_event.is_set():
+                    t_start = time.time()
+                    
+                    img = np.array(sct.grab(monitor))
+                    img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+                    
+                    _, buf = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, QUALITY_VAL])
+                    data = buf.tobytes()
+                    
+                    try:
+                        send_safe(b'v', data)
+                    except Exception as e:
+                        callback_log(f"Socket disconnected: {e}")
+                        break
+                    
+                    elapsed = time.time() - t_start
+                    sleep_time = frame_time - elapsed
+                    if sleep_time > 0:
+                        steps = int(sleep_time / 0.05)
+                        for _ in range(steps):
+                            if stop_event.is_set():
+                                break
+                            time.sleep(0.05)
+                        rem = sleep_time - (steps * 0.05)
+                        if rem > 0 and not stop_event.is_set():
+                            time.sleep(rem)
+        except Exception as e:
+            callback_log(f"Streaming error: {e}")
+        finally:
+            try:
+                ws.close()
+            except:
+                pass
+            callback_log("Global Screen Sharing Stopped.")
+            callback_done()
+
+
 # =============================================================================
 # GUI APPLICATION
 # =============================================================================
@@ -241,6 +487,14 @@ class ModernApp:
         self.viewer_proc = None
         self._queue = queue.Queue()
         self.custom_names = self.load_custom_names()
+        
+        # Connection settings StringVars
+        self.connection_mode = StringVar(value="local")
+        self.relay_url_var = StringVar(value="ws://localhost:8080")
+        self.global_role = StringVar(value="viewer")
+        self.ip_entry_var = StringVar()
+        self.streamer_running = False
+        self.streamer_stop_event = None
         
         self.setup_ui()
         self.load_config()
@@ -363,17 +617,18 @@ class ModernApp:
         page = ttk.Frame(self.content_frame); self.pages["Dashboard"] = page
         ttk.Label(page, text="System Dashboard", style="Title.TLabel").pack(anchor=W, pady=(0, 20))
         
-        c_card = ttk.LabelFrame(page, text=" Live Viewer Client ", padding=15)
-        c_card.pack(fill='x', pady=10)
+        self.c_card = ttk.LabelFrame(page, text=" Live Viewer Client ", padding=15)
+        self.c_card.pack(fill='x', pady=10)
         self.c_status_var = StringVar(value="Status: Ready")
-        ttk.Label(c_card, textvariable=self.c_status_var, font=("Segoe UI", 10, "bold")).pack(side='left', padx=10)
-        self.c_btn = ttk.Button(c_card, text="Open Viewer", command=self.toggle_client)
+        ttk.Label(self.c_card, textvariable=self.c_status_var, font=("Segoe UI", 10, "bold")).pack(side='left', padx=10)
+        self.c_btn = ttk.Button(self.c_card, text="Open Viewer", command=self.toggle_client)
         self.c_btn.pack(side='right', padx=10)
         # Quick scan button on dashboard
-        self.scan_dash_btn = ttk.Button(c_card, text="Scan Network", command=lambda: (self.show_page("Scanner"), self.start_scan()))
+        self.scan_dash_btn = ttk.Button(self.c_card, text="Scan Network", command=lambda: (self.show_page("Scanner"), self.start_scan()))
         self.scan_dash_btn.pack(side='right', padx=10)
         
-        ttk.Label(page, text="Quick Connect - Online Devices", font=("Segoe UI", 10, "bold")).pack(anchor=W, pady=(20, 5))
+        self.quick_connect_label = ttk.Label(page, text="Quick Connect - Online Devices", font=("Segoe UI", 10, "bold"))
+        self.quick_connect_label.pack(anchor=W, pady=(20, 5))
         cols = ('IP Address', 'Hostname', 'Status')
         self.dash_tree = ttk.Treeview(page, columns=cols, show='headings', height=8)
         for col in cols:
@@ -386,10 +641,10 @@ class ModernApp:
         self.dash_connect_btn = ttk.Button(page, text="Connect to Selected", state='disabled', command=self.apply_dash_ip)
         self.dash_connect_btn.pack(anchor=E)
 
-        info = ttk.LabelFrame(page, text=" Connection Info ", padding=15)
-        info.pack(fill='x', pady=10)
+        self.info_card = ttk.LabelFrame(page, text=" Connection Info ", padding=15)
+        self.info_card.pack(fill='x', pady=10)
         self.target_ip_var = StringVar(value="Target IP: Not Set")
-        ttk.Label(info, textvariable=self.target_ip_var).pack(anchor=W)
+        ttk.Label(self.info_card, textvariable=self.target_ip_var).pack(anchor=W)
 
     def create_scanner_page(self):
         page = ttk.Frame(self.content_frame); self.pages["Scanner"] = page
@@ -415,11 +670,52 @@ class ModernApp:
     def create_settings_page(self):
         page = ttk.Frame(self.content_frame); self.pages["Settings"] = page
         ttk.Label(page, text="Configuration", style="Title.TLabel").pack(anchor=W, pady=(0, 20))
-        form = ttk.Frame(page); form.pack(fill='x')
-        ttk.Label(form, text="Target IP Address:").grid(row=0, column=0, sticky=W, pady=5)
-        self.ip_entry_var = StringVar()
-        ttk.Entry(form, textvariable=self.ip_entry_var, width=30).grid(row=0, column=1, sticky=W, padx=10)
+        
+        form = ttk.Frame(page); form.pack(fill='both', expand=True)
+        
+        # Mode Selection
+        ttk.Label(form, text="Connection Mode:", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky=W, pady=10)
+        mode_frame = ttk.Frame(form)
+        mode_frame.grid(row=0, column=1, sticky=W, padx=10)
+        ttk.Radiobutton(mode_frame, text="Local LAN Mode", variable=self.connection_mode, value="local", command=self.on_mode_change).pack(side='left', padx=5)
+        ttk.Radiobutton(mode_frame, text="Global Internet Mode", variable=self.connection_mode, value="global", command=self.on_mode_change).pack(side='left', padx=5)
+        
+        # Local Mode Section
+        self.local_settings_frame = ttk.LabelFrame(form, text=" Local LAN Settings ", padding=10)
+        self.local_settings_frame.grid(row=1, column=0, columnspan=2, sticky=(W, E), pady=10)
+        
+        ttk.Label(self.local_settings_frame, text="Target IP Address:").grid(row=0, column=0, sticky=W, pady=5)
+        self.ip_entry = ttk.Entry(self.local_settings_frame, textvariable=self.ip_entry_var, width=30)
+        self.ip_entry.grid(row=0, column=1, sticky=W, padx=10)
+        
+        # Global Mode Section
+        self.global_settings_frame = ttk.LabelFrame(form, text=" Global Internet Settings ", padding=10)
+        self.global_settings_frame.grid(row=2, column=0, columnspan=2, sticky=(W, E), pady=10)
+        
+        ttk.Label(self.global_settings_frame, text="Relay WS URL:").grid(row=0, column=0, sticky=W, pady=5)
+        self.relay_url_entry = ttk.Entry(self.global_settings_frame, textvariable=self.relay_url_var, width=45)
+        self.relay_url_entry.grid(row=0, column=1, sticky=W, padx=10)
+        
+        ttk.Label(self.global_settings_frame, text="Global Role:").grid(row=1, column=0, sticky=W, pady=5)
+        role_frame = ttk.Frame(self.global_settings_frame)
+        role_frame.grid(row=1, column=1, sticky=W, padx=10, pady=5)
+        ttk.Radiobutton(role_frame, text="Watch Screen (Viewer)", variable=self.global_role, value="viewer").pack(side='left', padx=5)
+        ttk.Radiobutton(role_frame, text="Share Screen & Voice (Streamer)", variable=self.global_role, value="streamer").pack(side='left', padx=5)
+        
+        # Save Button
         ttk.Button(page, text="Save Settings", command=self.save_config).pack(anchor=W, pady=20)
+        
+        # Trigger visibility update on start
+        self.on_mode_change()
+
+    def on_mode_change(self):
+        mode = self.connection_mode.get()
+        if mode == "local":
+            self.local_settings_frame.grid()
+            self.global_settings_frame.grid_remove()
+        else:
+            self.local_settings_frame.grid_remove()
+            self.global_settings_frame.grid()
 
     def create_logs_page(self):
         page = ttk.Frame(self.content_frame); self.pages["Logs"] = page
@@ -446,17 +742,58 @@ class ModernApp:
         self.root.after(100, self._poll_queue)
 
     def load_config(self):
+        # Read local IP
         if os.path.exists(CONFIG_FILE):
             with open(CONFIG_FILE, 'r') as f:
                 ip = f.read().strip()
                 self.ip_entry_var.set(ip)
-                self.target_ip_var.set(f"Target IP: {ip}")
+        
+        # Read relay URL from config_global.txt
+        global_config_path = "config_global.txt"
+        if os.path.exists(global_config_path):
+            with open(global_config_path, 'r') as f:
+                url = f.read().strip()
+                self.relay_url_var.set(url)
+                
+        # Read JSON UI config if it exists
+        ui_config_path = "config_ui.json"
+        if os.path.exists(ui_config_path):
+            try:
+                with open(ui_config_path, 'r', encoding='utf-8') as f:
+                    cfg = json.load(f)
+                    self.connection_mode.set(cfg.get("connection_mode", "local"))
+                    self.global_role.set(cfg.get("global_role", "viewer"))
+            except Exception:
+                pass
+                
         self.refresh_device_tables()
+        self.update_dashboard_ui()
 
     def save_config(self):
+        # Save IP
         ip = self.ip_entry_var.get().strip()
-        with open(CONFIG_FILE, 'w') as f: f.write(ip)
-        self.target_ip_var.set(f"Target IP: {ip}")
+        with open(CONFIG_FILE, 'w') as f: 
+            f.write(ip)
+            
+        # Save Relay URL to config_global.txt
+        url = self.relay_url_var.get().strip()
+        with open("config_global.txt", 'w') as f: 
+            f.write(url)
+            
+        # Save JSON UI config
+        ui_config_path = "config_ui.json"
+        cfg = {
+            "connection_mode": self.connection_mode.get(),
+            "global_role": self.global_role.get()
+        }
+        try:
+            with open(ui_config_path, 'w', encoding='utf-8') as f:
+                json.dump(cfg, f, indent=2)
+        except Exception as e:
+            self.log(f"Failed to save UI config: {e}")
+            
+        self.update_dashboard_ui()
+        self.log("Settings saved.")
 
     def start_scan(self):
         if self.scanner_running: return
@@ -490,12 +827,99 @@ class ModernApp:
         def viewer_done():
             self.root.after(0, lambda: self.on_process_exit("viewer"))
 
-        # Direct thread - subprocess loop fix
         threading.Thread(
             target=AppLogic.run_viewer,
             args=(ip, self.log, viewer_done),
             daemon=True
         ).start()
+
+    def start_global_viewer(self, url):
+        if self.client_running:
+            return
+
+        self.client_running = True
+        self.c_status_var.set("Status: Running (Viewer)")
+        self.c_btn.config(state='disabled')
+
+        def viewer_done():
+            self.root.after(0, lambda: self.on_process_exit("viewer"))
+
+        threading.Thread(
+            target=AppLogic.run_global_viewer,
+            args=(url, self.log, viewer_done),
+            daemon=True
+        ).start()
+
+    def toggle_global_streamer(self, url):
+        if self.streamer_running:
+            if self.streamer_stop_event:
+                self.streamer_stop_event.set()
+            return
+
+        self.streamer_running = True
+        self.c_status_var.set("Status: Sharing Screen")
+        self.c_btn.config(text="Stop Sharing")
+        self.streamer_stop_event = threading.Event()
+
+        def streamer_done():
+            self.root.after(0, self.on_streamer_exit)
+
+        threading.Thread(
+            target=AppLogic.run_global_streamer,
+            args=(url, self.log, streamer_done, self.streamer_stop_event),
+            daemon=True
+        ).start()
+
+    def on_streamer_exit(self):
+        self.streamer_running = False
+        self.streamer_stop_event = None
+        self.update_dashboard_ui()
+
+    def update_dashboard_ui(self):
+        if not hasattr(self, 'c_card') or not hasattr(self, 'target_ip_var'):
+            return
+            
+        mode = self.connection_mode.get()
+        if mode == "local":
+            self.c_card.config(text=" Live Viewer Client (Local LAN) ")
+            if self.client_running:
+                self.c_status_var.set("Status: Running")
+                self.c_btn.config(text="Open Viewer", state='disabled')
+            else:
+                self.c_status_var.set("Status: Ready")
+                self.c_btn.config(text="Open Viewer", state='normal')
+            self.scan_dash_btn.pack(side='right', padx=10)
+            self.quick_connect_label.pack(anchor=W, pady=(20, 5))
+            self.dash_tree.pack(fill='both', expand=True, pady=(0, 10))
+            self.dash_connect_btn.pack(anchor=E)
+            self.target_ip_var.set(f"Target IP: {self.ip_entry_var.get()}")
+            self.info_card.config(text=" Connection Info (Local LAN) ")
+        else:
+            role = self.global_role.get()
+            self.scan_dash_btn.pack_forget()
+            self.quick_connect_label.pack_forget()
+            self.dash_tree.pack_forget()
+            self.dash_connect_btn.pack_forget()
+            
+            if role == "viewer":
+                self.c_card.config(text=" Live Viewer Client (Global Internet) ")
+                if self.client_running:
+                    self.c_status_var.set("Status: Running")
+                    self.c_btn.config(text="Open Global Viewer", state='disabled')
+                else:
+                    self.c_status_var.set("Status: Ready")
+                    self.c_btn.config(text="Open Global Viewer", state='normal')
+            else:
+                self.c_card.config(text=" Live Screen Share (Global Internet) ")
+                if self.streamer_running:
+                    self.c_status_var.set("Status: Sharing Screen")
+                    self.c_btn.config(text="Stop Sharing", state='normal')
+                else:
+                    self.c_status_var.set("Status: Ready")
+                    self.c_btn.config(text="Start Sharing", state='normal')
+                    
+            self.target_ip_var.set(f"Relay URL: {self.relay_url_var.get()}")
+            self.info_card.config(text=" Connection Info (Global Internet) ")
 
     def _reader_thread(self, proc, mode):
         pass  # Not used anymore
@@ -507,11 +931,24 @@ class ModernApp:
         self.root.after(0, lambda: self.dash_tree.insert('', 'end', values=(ip, hostname, d[3])))
 
     def toggle_client(self):
-        ip = self.ip_entry_var.get()
-        if not ip:
-            messagebox.showwarning("Warning", "Please set a Target IP first.")
-            return
-        self.start_viewer(ip)
+        mode = self.connection_mode.get()
+        if mode == "local":
+            ip = self.ip_entry_var.get()
+            if not ip:
+                messagebox.showwarning("Warning", "Please set a Target IP first.")
+                return
+            self.start_viewer(ip)
+        else:
+            role = self.global_role.get()
+            url = self.relay_url_var.get().strip()
+            if not url:
+                messagebox.showwarning("Warning", "Please set a Relay WS URL first.")
+                return
+            
+            if role == "viewer":
+                self.start_global_viewer(url)
+            else:
+                self.toggle_global_streamer(url)
 
     def clear_scanner_results(self):
         self.tree.delete(*self.tree.get_children())
@@ -524,6 +961,7 @@ class ModernApp:
             self.viewer_proc = None
             self.c_status_var.set("Status: Ready")
             self.c_btn.config(state='normal')
+            self.update_dashboard_ui()
             self.log("Viewer closed.")
 
     def apply_selected_ip(self):
