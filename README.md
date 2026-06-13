@@ -60,6 +60,16 @@ Basic controls in the viewer window:
 
 This workspace also includes `server.exe` and `streamer.exe`. If you are using the packaged version instead of Python source files, `StartwindowsService.bat` is the launcher for the server side.
 
+## Railway Deployment
+
+The relay service is intended to run on Railway from the repository root using the `Procfile` start command:
+
+```bash
+web: python Code/relay.py
+```
+
+Railway reads the `PORT` environment variable automatically, and `Code/relay.py` already binds to that port.
+
 ## Notes
 
 - The server is designed for Windows and uses Windows-specific input handling.
