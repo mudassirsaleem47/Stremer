@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ScreenMirror Web Viewer</title>
+    <!-- load pako library from CDN for fast zlib decompression -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #1a1a1a;
+            color: #ffffff;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            height: 100vh;
+        }
+
+        #control-panel {
+            width: 100%;
+            max-width: 900px;
+            padding: 15px;
+            box-sizing: border-box;
+            background-color: #2a2a2a;
+            border-bottom-left-radius: 8px;
+            border-bottom-right-radius: 8px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .input-group {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        label {
+            font-size: 14px;
+            font-weight: bold;
+            color: #ccc;
+        }
+
+        input, select, button {
+            background-color: #3a3a3a;
+            border: 1px solid #555;
+            color: #fff;
+            padding: 6px 12px;
+            font-size: 14px;
+            border-radius: 4px;
+            outline: none;
+        }
+
+        input:focus, select:focus {
+            border-color: #007bff;
+        }
+
+        button {
+            background-color: #007bff;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background-color: #0056b3;
+        }
+
+        button.active {
+            background-color: #dc3545;
+        }
+
+        button.active:hover {
+            background-color: #bd2130;
+        }
+
+        #status {
+            font-size: 14px;
+            font-weight: bold;
+            color: #28a745;
+        }
+
+        #status.disconnected {
+            color: #ffc107;
+        }
+
+        #viewer-container {
+            flex: 1;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 10px;
+            box-sizing: border-box;
+            overflow: hidden;
+            position: relative;
+        }
+
+        #stream-img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            box-shadow: 0px 4px 15px rgba(0,0,0,0.5);
+            display: none;
+        }
+
+        #placeholder {
+            font-size: 20px;
+            color: #888;
+            font-weight: bold;
+            text-align: center;
+            border: 2px dashed #444;
+            padding: 40px;
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="control-panel">
+        <div class="input-group">
+            <label for="relay-url">Relay URL:</label>
+            <input type="text" id="relay-url" value="wss://stremer-production.up.railway.app" style="width: 280px;">
+        </div>
+
+        <div class="input-group">
+            <label for="device-select">Target PC:</label>
+            <select id="device-select" style="width: 180px;">
+                <option value="">-- Click Refresh --</option>
+            </select>
+            <button id="btn-refresh">Refresh List</button>
+        </div>
+
+        <button id="btn-connect">Connect Viewer</button>
+        <span id="status" class="disconnected">Status: DISCONNECTED</span>
+    </div>
+
+    <div id="viewer-container">
+        <div id="placeholder">No Stream Connected. Select a Target PC and click Connect.</div>
+        <img id="stream-img" alt="Stream Output">
+    </div>
+
+    <script>
+        const relayUrlInput = document.getElementById('relay-url');
+        const deviceSelect = document.getElementById('device-select');
+        const btnRefresh = document.getElementById('btn-refresh');
+        const btnConnect = document.getElementById('btn-connect');
+        const statusSpan = document.getElementById('status');
+        const streamImg = document.getElementById('stream-img');
+        const placeholderDiv = document.getElementById('placeholder');
+
+        let ws = null;
+        let audioCtx = null;
+        let nextStartTime = 0;
+        const SAMPLE_RATE = 16000;
+        let lastFrameUrl = null;
+
+        // Fetch active devices list via temporary WebSocket connection to /registry
+        btnRefresh.addEventListener('click', () => {
+            const baseUrl = relayUrlInput.value.trim().replace(/\/$/, "");
+            if (!baseUrl) {
+                alert("Please enter a valid Relay URL first.");
+                return;
+            }
+            const registryUrl = baseUrl + "/registry";
+            statusSpan.textContent = "Fetching list...";
+            statusSpan.className = "disconnected";
+
+            const regWs = new WebSocket(registryUrl);
+            regWs.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    const devices = data.devices || [];
+                    
+                    deviceSelect.innerHTML = "";
+                    const producers = devices.filter(d => d.role === 'producer');
+                    
+                    if (producers.length === 0) {
+                        deviceSelect.innerHTML = '<option value="">No targets online</option>';
+                    } else {
+                        producers.forEach(p => {
+                            const opt = document.createElement('option');
+                            opt.value = p.device_id;
+                            opt.textContent = `${p.hostname} (${p.device_id})`;
+                            deviceSelect.appendChild(opt);
+                        });
+                    }
+                    statusSpan.textContent = "List updated";
+                } catch (err) {
+                    console.error("Failed to parse registry: ", err);
+                    statusSpan.textContent = "Error loading list";
+                }
+            };
+
+            regWs.onerror = () => {
+                statusSpan.textContent = "Connection failed";
+                deviceSelect.innerHTML = '<option value="">Registry error</option>';
+            };
+
+            regWs.onclose = () => {
+                if (statusSpan.textContent === "Fetching list...") {
+                    statusSpan.textContent = "Disconnected";
+                }
+            };
+        });
+
+        // Initialize Audio Playback (requires user gesture)
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: SAMPLE_RATE });
+                nextStartTime = audioCtx.currentTime;
+            } else if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        // Play incoming decompressed PCM chunks
+        function playPCM(pcmData) {
+            initAudio();
+
+            // Convert Int16 (2 bytes per sample) into Float32 [-1.0, 1.0]
+            const int16Array = new Int16Array(pcmData.buffer, pcmData.byteOffset, pcmData.byteLength / 2);
+            const float32Array = new Float32Array(int16Array.length);
+            for (let i = 0; i < int16Array.length; i++) {
+                float32Array[i] = int16Array[i] / 32768.0;
+            }
+
+            // Create AudioBuffer
+            const audioBuffer = audioCtx.createBuffer(1, float32Array.length, SAMPLE_RATE);
+            audioBuffer.getChannelData(0).set(float32Array);
+
+            // Create AudioBufferSourceNode
+            const source = audioCtx.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(audioCtx.destination);
+
+            // Schedule seamlessly in timeline
+            const currentTime = audioCtx.currentTime;
+            if (nextStartTime < currentTime) {
+                nextStartTime = currentTime;
+            }
+            source.start(nextStartTime);
+            nextStartTime += audioBuffer.duration;
+        }
+
+        // Toggle Streaming Connection
+        btnConnect.addEventListener('click', () => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                // Disconnect
+                ws.close();
+                return;
+            }
+
+            const baseUrl = relayUrlInput.value.trim().replace(/\/$/, "");
+            const selectedDevice = deviceSelect.value;
+            if (!selectedDevice) {
+                alert("Please select a target PC from the list first (click Refresh List).");
+                return;
+            }
+
+            initAudio();
+
+            const targetUrl = `${baseUrl}/consumer?target=${selectedDevice}`;
+            statusSpan.textContent = "Connecting...";
+            statusSpan.className = "disconnected";
+            btnConnect.disabled = true;
+
+            ws = new WebSocket(targetUrl);
+            ws.binaryType = "arraybuffer";
+
+            ws.onopen = () => {
+                ws.send(JSON.stringify({
+                    role: "consumer",
+                    hostname: "BrowserViewer",
+                    device_id: "BrowserViewer_" + Math.floor(Math.random() * 1000),
+                    connected_at: new Date().toISOString()
+                }));
+                statusSpan.textContent = "Status: CONNECTED";
+                statusSpan.className = "";
+                btnConnect.textContent = "Disconnect Viewer";
+                btnConnect.className = "active";
+                btnConnect.disabled = false;
+                placeholderDiv.textContent = "Waiting for Stream frames...";
+            };
+
+            ws.onmessage = (event) => {
+                if (!(event.data instanceof ArrayBuffer)) return;
+
+                const packet = new Uint8Array(event.data);
+                const prefix = packet[0];
+                const payload = packet.subarray(1);
+
+                if (prefix === 0x76) { // 'v' = video
+                    const blob = new Blob([payload], { type: 'image/jpeg' });
+                    const url = URL.createObjectURL(blob);
+                    
+                    streamImg.src = url;
+                    streamImg.style.display = "block";
+                    placeholderDiv.style.display = "none";
+
+                    // Prevent memory leak
+                    if (lastFrameUrl) {
+                        URL.revokeObjectURL(lastFrameUrl);
+                    }
+                    lastFrameUrl = url;
+                } else if (prefix === 0x61) { // 'a' = audio
+                    try {
+                        const decompressed = pako.inflate(payload);
+                        playPCM(decompressed);
+                    } catch (e) {
+                        console.error("Audio decompression error:", e);
+                    }
+                }
+            };
+
+            ws.onerror = (err) => {
+                console.error("WebSocket error:", err);
+            };
+
+            ws.onclose = () => {
+                ws = null;
+                statusSpan.textContent = "Status: DISCONNECTED";
+                statusSpan.className = "disconnected";
+                btnConnect.textContent = "Connect Viewer";
+                btnConnect.className = "";
+                btnConnect.disabled = false;
+                streamImg.style.display = "none";
+                placeholderDiv.style.display = "block";
+                placeholderDiv.textContent = "Viewer disconnected. Select target and reconnect.";
+                if (lastFrameUrl) {
+                    URL.revokeObjectURL(lastFrameUrl);
+                    lastFrameUrl = null;
+                }
+            };
+        });
+    </script>
+</body>
+</html>

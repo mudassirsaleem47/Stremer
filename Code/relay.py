@@ -93,28 +93,47 @@ async def handler(websocket, path=None):
         print(f"Producer connected. Total producers: {len(producers)}")
         try:
             meta = await read_hello(websocket)
-            register_device(websocket, req_path, meta, 'producer')
+            producer_id = register_device(websocket, req_path, meta, 'producer')
             async for message in websocket:
                 touch_device(websocket)
-                # Forward binary frame/audio to all consumers
+                # Forward binary frame/audio ONLY to consumers subscribed to this producer
                 if consumers:
-                    await asyncio.gather(
-                        *[consumer.send(message) for consumer in consumers.copy()],
-                        return_exceptions=True
-                    )
+                    subscribers = [
+                        c for c in consumers
+                        if getattr(c, '_target_device_id', None) == producer_id
+                    ]
+                    if subscribers:
+                        await asyncio.gather(
+                            *[c.send(message) for c in subscribers],
+                            return_exceptions=True
+                        )
         except websockets.exceptions.ConnectionClosed:
             pass
         finally:
             producers.discard(websocket)
             unregister_device(websocket)
             print(f"Producer disconnected. Total producers: {len(producers)}")
-
+ 
     elif req_path.startswith("/consumer"):
         consumers.add(websocket)
         print(f"Consumer connected. Total consumers: {len(consumers)}")
         try:
             meta = await read_hello(websocket)
             register_device(websocket, req_path, meta, 'consumer')
+            
+            # Extract target device_id from request path or query parameters
+            target_device_id = None
+            if "target=" in req_path:
+                try:
+                    target_device_id = req_path.split("target=")[1].split("&")[0].strip()
+                except:
+                    pass
+            elif req_path.startswith("/consumer/"):
+                target_device_id = req_path[len("/consumer/"):].strip()
+            
+            websocket._target_device_id = target_device_id
+            print(f"Consumer subscribed to target: {target_device_id}")
+            
             async for message in websocket:
                 touch_device(websocket)
         except websockets.exceptions.ConnectionClosed:
