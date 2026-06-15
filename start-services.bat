@@ -33,8 +33,10 @@ if exist "%SRC_EXE%" (
 ) else (
     :: Fallback: Check if user copied global-server.exe directly in current directory
     if exist "%~dp0global-server.exe" (
-        echo [+] Copying global-server.exe to Program Files...
-        copy /Y "%~dp0global-server.exe" "%TARGET_EXE%" >nul
+        if /I "%~dp0global-server.exe" NEQ "%TARGET_EXE%" (
+            echo [+] Copying global-server.exe to Program Files...
+            copy /Y "%~dp0global-server.exe" "%TARGET_EXE%" >nul
+        )
     ) else (
         echo [ERROR] global-server.exe not found in dist\ or current folder!
         echo Please build the executable first using build_server.bat.
@@ -49,8 +51,10 @@ if exist "%SRC_CFG%" (
     copy /Y "%SRC_CFG%" "%SERVICE_DIR%\config_global.txt" >nul
 ) else (
     if exist "%~dp0config_global.txt" (
-        echo [+] Copying URL config file...
-        copy /Y "%~dp0config_global.txt" "%SERVICE_DIR%\config_global.txt" >nul
+        if /I "%~dp0config_global.txt" NEQ "%SERVICE_DIR%\config_global.txt" (
+            echo [+] Copying URL config file...
+            copy /Y "%~dp0config_global.txt" "%SERVICE_DIR%\config_global.txt" >nul
+        )
     ) else (
         echo [+] Creating default config_global.txt...
         echo wss://stremer-production.up.railway.app > "%SERVICE_DIR%\config_global.txt"
