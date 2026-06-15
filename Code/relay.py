@@ -152,7 +152,15 @@ async def handler(websocket, path=None):
         finally:
             await websocket.close()
 
-async def process_request(path, headers):
+async def process_request(arg1, arg2):
+    # Support both old websockets API (path, headers) and new API (connection, request)
+    if hasattr(arg2, 'headers'):
+        headers = arg2.headers
+        path = arg2.path
+    else:
+        headers = arg2
+        path = arg1
+
     # Check if Upgrade header is missing (meaning it's a standard HTTP request, not WebSocket)
     if "upgrade" not in headers:
         # Standard HTTP response
