@@ -1,0 +1,16 @@
+Traceback (most recent call last):
+  File "d:\Stremer\Code\app_with_ui.py", line 1130, in <module>
+    app = ModernApp(root)
+          ^^^^^^^^^^^^^^^
+  File "d:\Stremer\Code\app_with_ui.py", line 590, in __init__
+    self.setup_ui()
+  File "d:\Stremer\Code\app_with_ui.py", line 629, in setup_ui
+    self.create_settings_page()
+  File "d:\Stremer\Code\app_with_ui.py", line 855, in create_settings_page
+    self.ip_entry.configure(bg="#070c0a", fg="#00ff33", insertbackground="#00ff33", font=("Consolas", 10), relief="flat")
+  File "C:\Users\mudas\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\tkinter\__init__.py", line 1722, in configure
+    return self._configure('configure', cnf, kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\mudas\AppData\Roaming\uv\python\cpython-3.12-windows-x86_64-none\Lib\tkinter\__init__.py", line 1712, in _configure
+    self.tk.call(_flatten((self._w, cmd)) + self._options(cnf))
+_tkinter.TclError: unknown option "-bg"

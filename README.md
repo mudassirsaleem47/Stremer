@@ -1,12 +1,12 @@
 # Stremer
 
-Stremer is a simple LAN screen-mirroring tool with mouse and keyboard control. One machine runs the server and shares its screen; the other machine connects as the client and displays the live feed.
+Stremer is a simple LAN screen-mirroring tool. One machine runs the server and shares its screen; the other machine connects as the client and displays the live feed.
 
 ## What’s Included
 
 - `Code/server.py` - runs on the target PC and captures the screen.
 - `Code/client.py` - runs on the viewer PC and receives the stream.
-- `Code/app with UI.py` - optional Tkinter-based UI for scanning and connecting.
+- `Code/app_with_ui.py` - optional Tkinter-based UI for scanning and connecting.
 - `config.txt` - stores the target PC IPv4 address for the client.
 - `StartwindowsService.bat` - helper script that launches the packaged server as administrator.
 
@@ -43,28 +43,35 @@ pip install -r requirements-desktop.txt
 
 Run `Code/server.py` on the machine whose screen you want to share.
 
-The server listens on port `9999`, starts a control channel for mouse and keyboard input, and tries to add a Windows Firewall rule for that port.
+The server listens on port `9999` and tries to add a Windows Firewall rule for that port.
 
 ### Viewer PC
 
-Run `Code/client.py` on the machine you want to use for viewing and control.
+Run `Code/client.py` on the machine you want to use for viewing.
 
 The client reads the first valid IPv4 from `config.txt`. If the file is missing or empty, it prompts you for the target IP and saves it for next time.
 
 Basic controls in the viewer window:
 
-- Move mouse to control the remote PC.
-- Left / right / middle click are forwarded to the target.
 - `Q` quits.
 - `F` toggles fullscreen.
 
 ### Optional GUI
 
-`Code/app with UI.py` provides a graphical interface for scanning the local subnet and opening a viewer window.
+`Code/app_with_ui.py` provides a graphical interface for scanning the local subnet and opening a viewer window.
 
-## Packaged Files
+## Target PC Deployment (`target/` folder)
 
-This workspace also includes `server.exe` and `streamer.exe`. If you are using the packaged version instead of Python source files, `StartwindowsService.bat` is the launcher for the server side.
+For quick deployment on target machines, a dedicated `target/` directory is provided. You can copy this folder to the target machine and run the corresponding setup scripts:
+
+### 1. Local LAN Mode
+* **`target/server.exe`** - The direct TCP screen-sharing server.
+* **`target/StartwindowsService.bat`** - Run as Administrator to copy the server into `Program Files` and start it silently in the background (configured to auto-start on login).
+
+### 2. Global Internet Mode
+* **`target/streamer_global.exe`** - The silent WebSocket screen-sharing service.
+* **`target/config_global.txt`** - Set your WebSocket relay server URL here (defaults to `https://stremer-production.up.railway.app`).
+* **`target/StartGlobalStreamer.bat`** - Run as Administrator to deploy the global streamer service silently in the background (configured to auto-start on login).
 
 ## Build And Install
 

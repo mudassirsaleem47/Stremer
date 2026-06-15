@@ -2,23 +2,19 @@ import asyncio
 import json
 import os
 import time
-
 import websockets
 
 producers = set()
 consumers = set()
 registry = {}
 
-
 def now_text():
     return time.strftime('%Y-%m-%d %H:%M:%S')
-
 
 def registry_key(websocket, meta, default_role):
     hostname = str(meta.get('hostname') or getattr(websocket, 'host', None) or 'Unknown').strip() or 'Unknown'
     device_id = str(meta.get('device_id') or f'{hostname}:{default_role}:{id(websocket)}').strip()
     return device_id
-
 
 def register_device(websocket, req_path, meta, role):
     device_id = registry_key(websocket, meta, role)
@@ -34,25 +30,20 @@ def register_device(websocket, req_path, meta, role):
     websocket._registry_device_id = device_id
     return device_id
 
-
 def touch_device(websocket):
     device_id = getattr(websocket, '_registry_device_id', None)
     if device_id and device_id in registry:
         registry[device_id]['last_seen'] = now_text()
-
 
 def unregister_device(websocket):
     device_id = getattr(websocket, '_registry_device_id', None)
     if device_id:
         registry.pop(device_id, None)
 
-
 def registry_snapshot():
     return sorted(registry.values(), key=lambda item: (item.get('role', ''), item.get('hostname', ''), item.get('device_id', '')))
 
-
 def extract_request_path(websocket, fallback_path=None):
-    # websockets versions expose request path differently. Try stable sources first.
     direct = getattr(websocket, 'path', None)
     if isinstance(direct, str) and direct:
         return direct
@@ -66,7 +57,6 @@ def extract_request_path(websocket, fallback_path=None):
         return fallback_path
 
     return '/'
-
 
 async def read_hello(websocket):
     meta = {}
@@ -89,7 +79,6 @@ async def read_hello(websocket):
 
 async def handler(websocket, path=None):
     req_path = extract_request_path(websocket, path)
-        
     print(f"Connection attempt on path: {req_path}")
 
     if req_path.startswith('/registry'):
@@ -107,7 +96,7 @@ async def handler(websocket, path=None):
             register_device(websocket, req_path, meta, 'producer')
             async for message in websocket:
                 touch_device(websocket)
-                # Forward binary frame to all consumers
+                # Forward binary frame/audio to all consumers
                 if consumers:
                     await asyncio.gather(
                         *[consumer.send(message) for consumer in consumers.copy()],
@@ -144,7 +133,6 @@ async def handler(websocket, path=None):
             await websocket.close()
 
 async def main():
-    # Railway binds to port given by $PORT
     port = int(os.environ.get("PORT", 8080))
     print(f"Starting relay server on 0.0.0.0:{port} ...")
     async with websockets.serve(handler, "0.0.0.0", port):
