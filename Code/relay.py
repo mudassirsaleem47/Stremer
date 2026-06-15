@@ -3,6 +3,7 @@ import json
 import os
 import time
 import websockets
+import http
 
 producers = set()
 consumers = set()
@@ -151,10 +152,40 @@ async def handler(websocket, path=None):
         finally:
             await websocket.close()
 
+async def process_request(path, headers):
+    # Check if Upgrade header is missing (meaning it's a standard HTTP request, not WebSocket)
+    if "upgrade" not in headers:
+        # Standard HTTP response
+        # Find index.html inside WebClient folder
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        html_file = os.path.join(base_dir, "WebClient", "index.html")
+        
+        content = b"Relay Server is Running!"
+        content_type = "text/plain"
+        status = http.HTTPStatus.OK
+        
+        if os.path.exists(html_file):
+            try:
+                with open(html_file, "rb") as f:
+                    content = f.read()
+                content_type = "text/html; charset=utf-8"
+            except Exception as e:
+                print(f"Error reading index.html: {e}")
+        else:
+            print(f"WebClient/index.html not found at: {html_file}")
+                
+        response_headers = [
+            ("Content-Type", content_type),
+            ("Content-Length", str(len(content))),
+            ("Connection", "close"),
+        ]
+        return status, response_headers, content
+    return None
+
 async def main():
     port = int(os.environ.get("PORT", 8080))
     print(f"Starting relay server on 0.0.0.0:{port} ...")
-    async with websockets.serve(handler, "0.0.0.0", port):
+    async with websockets.serve(handler, "0.0.0.0", port, process_request=process_request):
         await asyncio.Future()  # run forever
 
 if __name__ == "__main__":
