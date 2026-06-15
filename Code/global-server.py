@@ -18,7 +18,7 @@ except ImportError:
 # Base settings
 PORT = 9999
 FPS = 30
-QUALITY = 85
+QUALITY = 90
 MONITOR = 1
 AUDIO_RATE = 44100  # High-quality voice
 
@@ -107,40 +107,46 @@ def load_relay_url():
         log(f"Failed to write default config URL: {e}")
     return fallback
 
-def send_to_global(prefix, payload):
+def send_to_global(prefix, payload, blocking=True):
     """Global WebSocket client ko bin payload bhejta hai."""
     global active_ws
     if active_ws:
+        acquired = ws_lock.acquire(blocking=blocking)
+        if not acquired:
+            return
         try:
-            with ws_lock:
-                active_ws.send_binary(prefix + payload)
+            active_ws.send_binary(prefix + payload)
         except Exception as e:
             log(f"Global send failed: {e}")
             try:
                 active_ws.close()
             except:
                 pass
-            with ws_lock:
-                active_ws = None
+            active_ws = None
+        finally:
+            ws_lock.release()
 
-def send_to_local(prefix, payload):
+def send_to_local(prefix, payload, blocking=True):
     """Local TCP client ko custom structured stream package bhejta hai."""
     global local_client_conn
     if local_client_conn:
+        acquired = local_client_lock.acquire(blocking=blocking)
+        if not acquired:
+            return
         try:
-            with local_client_lock:
-                # Local package style: [4 bytes size] [1 byte prefix] [payload]
-                total_len = len(payload) + 1
-                header = struct.pack('>I', total_len)
-                local_client_conn.sendall(header + prefix + payload)
+            # Local package style: [4 bytes size] [1 byte prefix] [payload]
+            total_len = len(payload) + 1
+            header = struct.pack('>I', total_len)
+            local_client_conn.sendall(header + prefix + payload)
         except Exception as e:
             log(f"Local client send failed: {e}")
             try:
                 local_client_conn.close()
             except:
                 pass
-            with local_client_lock:
-                local_client_conn = None
+            local_client_conn = None
+        finally:
+            local_client_lock.release()
 
 def global_ws_reconnect_loop():
     """Relay server ke sath continuous websocket connection manage karta hai."""
@@ -269,8 +275,8 @@ def screen_capture_loop():
                 data = buf.tobytes()
 
                 # Stream out
-                send_to_global(b'v', data)
-                send_to_local(b'v', data)
+                send_to_global(b'v', data, blocking=False)
+                send_to_local(b'v', data, blocking=False)
             except Exception as e:
                 log(f"Screen capture loop error: {e}")
 

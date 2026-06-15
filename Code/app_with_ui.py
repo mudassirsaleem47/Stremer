@@ -87,7 +87,7 @@ def recv_exact(sock, n):
                 return None
             data += chunk
         except socket.timeout:
-            return None
+            continue
         except Exception:
             return None
     return data
@@ -244,7 +244,7 @@ class AppLogic:
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            sock.settimeout(0.05)
+            sock.settimeout(1.0)
             sock.connect((ip, DEFAULT_PORT))
             callback_log("Connected! Initializing stream...")
         except Exception as e:
@@ -388,7 +388,7 @@ class AppLogic:
         
         try:
             ws = websocket.create_connection(relay_url)
-            ws.settimeout(0.05)
+            ws.settimeout(1.0)
             ws.send(json.dumps({
                 'role': 'consumer',
                 'hostname': socket.gethostname(),

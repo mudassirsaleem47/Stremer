@@ -17,6 +17,9 @@ echo.
 set "SERVICE_DIR=C:\Program Files\GlobalServer"
 set "TARGET_EXE=%SERVICE_DIR%\global-server.exe"
 
+echo [+] Terminating any running server instance to release file locks...
+taskkill /f /im global-server.exe >nul 2>&1
+
 echo [+] Creating installation directory if not exists...
 if not exist "%SERVICE_DIR%" mkdir "%SERVICE_DIR%" >nul 2>&1
 

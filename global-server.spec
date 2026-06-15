@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['Code\\global-server.py'],
+    ['D:\\Stremer\\Code\\global-server.py'],
     pathex=[],
     binaries=[],
     datas=[],

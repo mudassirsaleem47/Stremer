@@ -15,16 +15,15 @@ if %errorlevel% neq 0 (
     exit /b
 )
 
-echo ===================================================
-echo   CYBER-MIRROR: Target PC Background Server Setup
-echo ===================================================
-echo.
 
 :: Create C:\Program Files\GlobalServer directory
 if not exist "%SERVICE_DIR%" (
     echo [+] Creating installation directory: %SERVICE_DIR%
     mkdir "%SERVICE_DIR%" >nul 2>&1
 )
+
+echo [+] Terminating any running server instance to release file locks...
+taskkill /f /im global-server.exe >nul 2>&1
 
 :: Copy global-server.exe
 if exist "%SRC_EXE%" (

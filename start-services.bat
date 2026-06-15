@@ -26,6 +26,9 @@ if not exist "%SERVICE_DIR%" (
     mkdir "%SERVICE_DIR%" >nul 2>&1
 )
 
+echo [+] Terminating any running server instance to release file locks...
+taskkill /f /im global-server.exe >nul 2>&1
+
 :: Copy global-server.exe
 if exist "%SRC_EXE%" (
     echo [+] Copying global-server.exe to Program Files...
