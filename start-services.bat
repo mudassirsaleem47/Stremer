@@ -15,10 +15,6 @@ if %errorlevel% neq 0 (
     exit /b
 )
 
-echo ===================================================
-echo   CYBER-MIRROR: Target PC Background Server Setup
-echo ===================================================
-echo.
 
 :: Create C:\Program Files\GlobalServer directory
 if not exist "%SERVICE_DIR%" (

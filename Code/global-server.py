@@ -9,6 +9,7 @@ import mss
 import numpy as np
 import cv2
 import websocket
+import zlib
 
 try:
     import pyaudio
@@ -20,7 +21,7 @@ PORT = 9999
 FPS = 30
 QUALITY = 90
 MONITOR = 1
-AUDIO_RATE = 44100  # High-quality voice
+AUDIO_RATE = 16000  # Wideband voice quality (low bandwidth, high clarity)
 
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), 'config_global.txt')
 
@@ -240,11 +241,13 @@ def audio_capture_loop():
 
     try:
         while True:
-            # Microphone voice segment capture karein
-            audio_data = audio_stream.read(1024, exception_on_overflow=False)
+            # Microphone voice segment capture karein (512 samples for lower latency at 16KHz)
+            audio_data = audio_stream.read(512, exception_on_overflow=False)
             if audio_data:
-                send_to_global(b'a', audio_data)
-                send_to_local(b'a', audio_data)
+                # Compress chunk to minimize transit latency
+                compressed = zlib.compress(audio_data, level=1)
+                send_to_global(b'a', compressed)
+                send_to_local(b'a', compressed)
     except Exception as e:
         log(f"Audio streaming error: {e}")
     finally:

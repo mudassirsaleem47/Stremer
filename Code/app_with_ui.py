@@ -11,6 +11,7 @@ import ipaddress
 import traceback
 import numpy as np
 import cv2
+import zlib
 from tkinter import Tk, StringVar, IntVar, ttk, scrolledtext, N, S, E, W, messagebox, Menu, simpledialog, Entry
 
 CONFIG_FILE = "config.txt"
@@ -18,7 +19,7 @@ NAMES_FILE = "device_names.json"
 DEFAULT_PORT = 9999
 GLOBAL_CONFIG_FILE = "config_global.txt"
 UI_CONFIG_FILE = "config_ui.json"
-AUDIO_RATE = 44100  # High-quality voice
+AUDIO_RATE = 16000  # Wideband voice quality (low bandwidth, high clarity)
 
 def write_crash_log(exc_text):
     try:
@@ -331,7 +332,11 @@ class AppLogic:
 
                     if prefix == b'a':
                         if pyaudio:
-                            audio_queue.put(payload)
+                            try:
+                                decompressed = zlib.decompress(payload)
+                                audio_queue.put(decompressed)
+                            except Exception:
+                                pass
                     elif prefix == b'v':
                         buf = np.frombuffer(payload, dtype=np.uint8)
                         frame = cv2.imdecode(buf, cv2.IMREAD_COLOR)
@@ -476,7 +481,11 @@ class AppLogic:
                 
                 if prefix == b'a':
                     if pyaudio:
-                        audio_queue.put(payload)
+                        try:
+                            decompressed = zlib.decompress(payload)
+                            audio_queue.put(decompressed)
+                        except Exception:
+                            pass
                 elif prefix == b'v':
                     buf = np.frombuffer(payload, dtype=np.uint8)
                     frame = cv2.imdecode(buf, cv2.IMREAD_COLOR)

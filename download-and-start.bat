@@ -9,11 +9,6 @@ if %errorlevel% neq 0 (
     exit /b
 )
 
-echo =======================================================
-echo   CYBER-MIRROR: Target PC Background Server Installer
-echo =======================================================
-echo.
-
 set "SERVICE_DIR=C:\Program Files\GlobalServer"
 set "TARGET_EXE=%SERVICE_DIR%\global-server.exe"
 
