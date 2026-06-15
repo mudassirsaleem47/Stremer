@@ -182,6 +182,16 @@ async def process_request(arg1, arg2):
         else:
             print(f"WebClient/index.html not found at: {html_file}")
                 
+        # Support new websockets version where process_request must return a Response object
+        if hasattr(arg1, 'respond'):
+            resp_headers = {
+                "Content-Type": content_type,
+                "Content-Length": str(len(content)),
+                "Connection": "close",
+            }
+            return arg1.respond(status, content, headers=resp_headers)
+
+        # Fallback to old API tuple response
         response_headers = [
             ("Content-Type", content_type),
             ("Content-Length", str(len(content))),
